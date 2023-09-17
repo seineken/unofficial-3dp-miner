@@ -1,9 +1,9 @@
-name: Build and Release CPU/GPU Miner
+name: Build and Release CPU/GPU Miner - Ubuntu 18.04
 
 on:
   push:
     branches:
-      - main
+      - develop
 
 concurrency:
     group: ${{ github.repository }}-${{ github.event.ref }}
@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-18.04
     permissions:
       contents: write
     steps:
