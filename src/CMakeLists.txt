@@ -36,8 +36,6 @@ set(CMAKE_C_FLAGS "${CLANG_FLAGS} ${STATIC_FLAGS} -m64 -s -funroll-all-loops -fP
 
 set(CUDA_NVCC_FLAGS "${CLANG_FLAGS} -std=c++11 --use_fast_math --relocatable-device-code=true -v -Xptxas -O3 ")
 
-# string(APPEND CMAKE_CUDA_FLAGS " -gencode arch=compute_50,code=sm_50")
-
 if(USE_CUDA)
 list(APPEND CUDA_FILES kernel.cu)
 list(APPEND CUDA_FILES grid_cuda.cu)

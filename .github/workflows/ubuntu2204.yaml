@@ -1,4 +1,4 @@
-name: Build and Release CPU/GPU Miner
+name: Build and Release CPU/GPU Miner - Ubuntu 22.04
 
 on:
   push:
