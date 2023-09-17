@@ -1,4 +1,4 @@
-# 3dp-miner
+# 3dp-miner [![Build and Release CPU/GPU Miner](https://github.com/seineken/unofficial-3dp-miner/actions/workflows/main.yaml/badge.svg)](https://github.com/seineken/unofficial-3dp-miner/actions/workflows/main.yaml)
 Full package of CPU + GPU miner
 
 * The main changes for optimizations are in the find_top_std_3 function (cpu) and find_top_std_2 (gpu)
