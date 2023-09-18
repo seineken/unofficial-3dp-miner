@@ -44,6 +44,42 @@
 
 #endif
 
+#if NVML
+nvmlDevice_t device;
+
+void readyNVML(int deviceIndex) {
+    nvmlInit();
+    nvmlDeviceGetHandleByIndex(deviceIndex, &device);
+}
+
+int getTemperature() {
+    unsigned int temperature;
+    nvmlDeviceGetTemperature(device, NVML_TEMPERATURE_GPU, &temperature);
+    return temperature;
+}
+
+int getCoreClock() {
+    unsigned int clock;
+    nvmlDeviceGetClock(device, NVML_CLOCK_GRAPHICS, NVML_CLOCK_ID_CURRENT,
+        &clock);
+    return clock;
+}
+
+int getMemoryClock() {
+    unsigned int memClock;
+    nvmlDeviceGetClock(device, NVML_CLOCK_MEM, NVML_CLOCK_ID_CURRENT, &memClock);
+    return memClock;
+}
+#else
+void readyNVML(int deviceIndex) {}
+
+int getTemperature() { return -1; }
+
+int getCoreClock() { return -1; }
+
+int getMemoryClock() { return -1; }
+#endif
+
 using namespace std::chrono;
 using namespace std;
 
@@ -1419,6 +1455,18 @@ void gpuMain(uint64_t threadId)
 {
     initGpuData(threadId, gpuInfos[threadId].blocks, gpuInfos[threadId].threads, sphere_stacks, sphere_slices);
     miner_log("GPU #" + to_string(threadId), "Initialized", "green");
+
+#if NVML
+    char driver[NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE];
+    nvmlSystemGetDriverVersion(driver, NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE);
+#else
+    char driver[] = "???.?? (NVML NOT ENABLED)";
+#endif
+
+    miner_log("NVidia Driver Version: %s\n", driver);
+
+    // No effect if NVML is not enabled.
+    readyNVML(threadId);
 
     Vec3Float64 *positions = new Vec3Float64[602];
     Vec3Float64 normals[602];

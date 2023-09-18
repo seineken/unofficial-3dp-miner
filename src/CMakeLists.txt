@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.5)
 
+if (UNIX)
+    set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
+endif()
+
+if(WIN32)
+    message(STATUS "Project is building for Windows")
+    set(CUDA_TOOLKIT_ROOT_DIR "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8")
+    set(CMAKE_CUDA_COMPILER "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin/nvcc.exe")
+endif()
+
 project("3dp-miner" LANGUAGES C CXX CUDA)
 enable_language(CUDA)
 enable_language(CXX)
