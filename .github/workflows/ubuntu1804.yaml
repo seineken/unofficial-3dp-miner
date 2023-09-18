@@ -50,6 +50,6 @@ jobs:
           src/build/3dp-miner_ubuntu18.tar.gz
         draft: true
         prerelease: false
-        skipIfReleaseExists: true
+        skipIfReleaseExists: false
         artifactErrorsFailBuild: true
         tag: latest-${{ github.event.ref }}
