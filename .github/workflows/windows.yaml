@@ -38,8 +38,7 @@ jobs:
       run: |
         cd src/build
         make -j$(nproc)
-        chmod +x ./3dp-miner
-        tar -czf 3dp-miner_windows.tar.gz ./3dp-miner
+        Compress-Archive -Path ./3dp-miner.exe -Destination ./3dp-miner_windows.zip
       working-directory: ${{ github.workspace }}
 
     
@@ -47,9 +46,9 @@ jobs:
       uses: ncipollo/release-action@v1.13.0
       with:
         artifacts: |
-          src/build/3dp-miner_windows.tar.gz
+          src/build/3dp-miner_windows.zip
         draft: true
         prerelease: false
         skipIfReleaseExists: false
         artifactErrorsFailBuild: true
-        tag: latest-${{ github.event.ref }}
+        tag: latest-windows
