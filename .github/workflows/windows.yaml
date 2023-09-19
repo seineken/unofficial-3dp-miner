@@ -37,7 +37,7 @@ jobs:
     - name: Build CUDA code
       run: |
         cd src/build
-        make -j$(nproc)
+        make -j N
         Compress-Archive -Path ./3dp-miner.exe -Destination ./3dp-miner_windows.zip
       working-directory: ${{ github.workspace }}
 
