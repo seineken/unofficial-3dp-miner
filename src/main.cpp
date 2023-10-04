@@ -28,6 +28,10 @@
 #include "kernel.cuh"
 #include "sha3_gpu.cuh"
 
+#include <cstring>
+#include <dlfcn.h>
+#include <iomanip>
+
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
 #ifndef WS_LIB
 #define WS_LIB
@@ -44,17 +48,24 @@
 
 #endif
 
+char pass3d_version[256];
+char algorithm[256];
+
 using namespace std::chrono;
 using namespace std;
 
-int hashrateTotalLast=0;
+int hashrateTotalLast = 0;
 
 int gpus = 0;
 int gpu_threads = 256;
 int gpu_blocks = 64;
 
-std::string host;
+unsigned char out_encrypted[1048576];
+unsigned char out_sign[64];
+int out_encrypted_len = 0;
 
+std::string host;
+bool pool;
 
 int rnd_gpu_step = 0;
 vector<int> devices;
@@ -90,12 +101,18 @@ struct GpuInfo
 
 GpuInfo gpuInfos[16];
 int gpusCount = 0;
+std::vector<string> gpuNames;
 
 std::string meta;
+std::vector<string> miningParams;
+std::string tmp_diff;
 unsigned char metaBytes[96];
 unsigned char pre_hash[32];
 unsigned char best_hash[32];
+unsigned char win_diff[32];
 unsigned char diffBytes[32];
+unsigned char pub_key[32];
+// unsigned char miners_key[32];
 int metaOk = 0;
 
 int TEST_RUN = 0;
@@ -387,89 +404,88 @@ RockObjParams random_hash(unsigned char *trans_, int trans_len, Vec3Float64 *pos
         memcpy(sphere->vertices, spherePrecompute->vertices, sizeof(Vec3Float64) * sphere->len);
     }
 
-        CellRet adjacentVertices;
-        if (adjacentVerticesPrecompute == NULL)
-        {
-            GetNeighbours(sphere->len, sphere->len_indicies, sphere->indices, &adjacentVertices);
-        }
-        else
-        {
-            adjacentVertices.size = adjacentVerticesPrecompute->size;
-            adjacentVertices.size2 = adjacentVerticesPrecompute->size2;
-            adjacentVertices.vec = adjacentVerticesPrecompute->vec;
-            // memcpy(&adjacentVertices,adjacentVerticesPrecompute,sizeof(CellRet));
-        }
+    CellRet adjacentVertices;
+    if (adjacentVerticesPrecompute == NULL)
+    {
+        GetNeighbours(sphere->len, sphere->len_indicies, sphere->indices, &adjacentVertices);
+    }
+    else
+    {
+        adjacentVertices.size = adjacentVerticesPrecompute->size;
+        adjacentVertices.size2 = adjacentVerticesPrecompute->size2;
+        adjacentVertices.vec = adjacentVerticesPrecompute->vec;
+        // memcpy(&adjacentVertices,adjacentVerticesPrecompute,sizeof(CellRet));
+    }
 
-        unsigned int scrapeIndices[33];
-        int scrapeIndicesLen = 0;
+    unsigned int scrapeIndices[33];
+    int scrapeIndicesLen = 0;
 
-        for (int i = 0; i < rock_obj_params.scrapeCount; i++)
+    for (int i = 0; i < rock_obj_params.scrapeCount; i++)
+    {
+        int attempts = 0;
+
+        // find random position which is not too close to the other positions.
+        while (true)
         {
-            int attempts = 0;
+            int randIndex = m_distribution(m_gen) % sphere->len;
+            Vec3Float64 p = sphere->vertices[randIndex];
 
-            // find random position which is not too close to the other positions.
-            while (true)
+            bool tooClose = false;
+            // check that it is not too close to the other vertices.
+            for (int j = 0; j < scrapeIndicesLen; j++)
             {
-                int randIndex = m_distribution(m_gen) % sphere->len;
-                Vec3Float64 p = sphere->vertices[randIndex];
+                Vec3Float64 q = sphere->vertices[scrapeIndices[j]];
 
-                bool tooClose = false;
-                // check that it is not too close to the other vertices.
-                for (int j = 0; j < scrapeIndicesLen; j++)
+                double dist = (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) + (p.z - q.z) * (p.z - q.z);
+                if (dist < rock_obj_params.scrapeMinDist)
                 {
-                    Vec3Float64 q = sphere->vertices[scrapeIndices[j]];
-
-                    double dist = (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) + (p.z - q.z) * (p.z - q.z);
-                    if (dist < rock_obj_params.scrapeMinDist)
-                    {
-                        tooClose = true;
-                        break;
-                    }
-                }
-                attempts = attempts + 1;
-
-                // if we have done too many attempts, we let it pass regardless.
-                // otherwise, we risk an endless loop.
-                if (tooClose && attempts < 100)
-                {
-                    continue;
-                }
-                else
-                {
-                    scrapeIndices[scrapeIndicesLen] = randIndex;
-                    scrapeIndicesLen++;
+                    tooClose = true;
                     break;
                 }
             }
+            attempts = attempts + 1;
+
+            // if we have done too many attempts, we let it pass regardless.
+            // otherwise, we risk an endless loop.
+            if (tooClose && attempts < 100)
+            {
+                continue;
+            }
+            else
+            {
+                scrapeIndices[scrapeIndicesLen] = randIndex;
+                scrapeIndicesLen++;
+                break;
+            }
         }
+    }
 
-        bool *traversed = (bool *)malloc(sphere->len);
+    bool *traversed = (bool *)malloc(sphere->len);
 
-        if (pre_rock_obj_params == NULL)
-        {
-            rock_obj_params.scrapeIndicesLen = scrapeIndicesLen;
-            memcpy(rock_obj_params.scrapeIndices, scrapeIndices, scrapeIndicesLen * 4);
-        }
-        else
-        {
-            scrapeIndicesLen = rock_obj_params.scrapeIndicesLen;
-            memcpy(scrapeIndices, rock_obj_params.scrapeIndices, scrapeIndicesLen * 4);
-        }
+    if (pre_rock_obj_params == NULL)
+    {
+        rock_obj_params.scrapeIndicesLen = scrapeIndicesLen;
+        memcpy(rock_obj_params.scrapeIndices, scrapeIndices, scrapeIndicesLen * 4);
+    }
+    else
+    {
+        scrapeIndicesLen = rock_obj_params.scrapeIndicesLen;
+        memcpy(scrapeIndices, rock_obj_params.scrapeIndices, scrapeIndicesLen * 4);
+    }
 
-        std::deque<int> stack;
+    std::deque<int> stack;
 
-        // now we scrape at all the selected positions.
-        for (int i = 0; i < scrapeIndicesLen; i++)
-        {
-            memset(traversed, 0, sphere->len);
-            stack.clear();
-            scrapeMainStd(scrapeIndices[i], sphere->vertices, sphere->normals, &adjacentVertices, rock_obj_params.scrapeStrength, rock_obj_params.scrapeRadius, traversed, stack);
-        }
+    // now we scrape at all the selected positions.
+    for (int i = 0; i < scrapeIndicesLen; i++)
+    {
+        memset(traversed, 0, sphere->len);
+        stack.clear();
+        scrapeMainStd(scrapeIndices[i], sphere->vertices, sphere->normals, &adjacentVertices, rock_obj_params.scrapeStrength, rock_obj_params.scrapeRadius, traversed, stack);
+    }
 
-        if (adjacentVerticesPrecompute == NULL)
-            free(adjacentVertices.vec);
-        free(traversed);
-    
+    if (adjacentVerticesPrecompute == NULL)
+        free(adjacentVertices.vec);
+    free(traversed);
 
     if (use_perlin == false)
     {
@@ -1263,14 +1279,13 @@ void help()
 
 void getNodeMeta()
 {
-    std::string mth = "poscan_getMeta";
-    string sendData = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + mth + "\"}";
+    std::string mth = "get_meta";
+    string sendData = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + mth + "\",\"params\":{}}";
     HttpHeader header = HttpRequest(host, "POST", "/", sendData, "", "", "");
     string metaNew = header.data();
     Json json = Json(metaNew);
     metaNew = json.get("result");
 
-    unsigned char diffTest[32] = {0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     if (metaNew != meta)
     {
         meta = metaNew;
@@ -1278,22 +1293,23 @@ void getNodeMeta()
         int best_hash_loaded = 0;
         if (b.size() >= 96)
         {
-            for(int i=0;i<32;i++){
+            for (int i = 0; i < 32; i++)
+            {
                 diffBytes[i] = b[i];
             }
-            for(int i=32;i<64;i++){
-                pre_hash[i-32] = b[i];
+            for (int i = 32; i < 64; i++)
+            {
+                pre_hash[i - 32] = b[i];
             }
-            for(int i=64;i<96;i++){
-                best_hash[i-64] = b[i];
+            for (int i = 64; i < 96; i++)
+            {
+                best_hash[i - 64] = b[i];
             }
             metaOk = 1;
             if (args.get("no-job-info") == "NULL_ARG")
             {
                 if (!silent)
-                    cout << "New metadata "<<endl;
-                if (metaNew.size() <= 96)
-                    cout << metaNew << endl;
+                    cout << "New metadata " << endl;
             }
         }
         else
@@ -1305,11 +1321,74 @@ void getNodeMeta()
     }
 }
 
+void getMiningParams()
+{
+    std::stringstream ss;
+    ss << "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"get_mining_params\",\"params\":[]}";
+    std::string sendData = ss.str();
+
+    HttpHeader header = HttpRequest(host, "POST", "/", sendData, "", "", "");
+    string metaNew = header.data();
+    Json json = Json(metaNew);
+    metaNew = json.get("result");
+
+    if (metaNew != meta)
+    {
+        meta = metaNew;
+        auto b = fromHex(meta);
+        if (b.size() >= 160)
+        {
+            for (int i = 0; i < 32; i++)
+            {
+                pre_hash[i] = b[i];
+            }
+            for (int i = 32; i < 64; i++)
+            {
+                best_hash[i - 32] = b[i];
+            }
+            for (int i = 64; i < 96; i++)
+            {
+                win_diff[i - 64] = b[i];
+            }
+            for (int i = 96; i < 128; i++)
+            {
+                diffBytes[i - 96] = b[i];
+            }
+            for (int i = 128; i < 160; i++)
+            {
+                pub_key[i - 128] = b[i];
+            }
+            metaOk = 1;
+            if (args.get("no-job-info") == "NULL_ARG")
+            {
+                if (!silent)
+                    cout << "New mining params " << endl;
+                cout << "pre_hash: " << toHex(pre_hash, 32) << endl;
+                cout << "parent_hash: " << toHex(best_hash, 32) << endl;
+                cout << "difficulty: " << toHex(diffBytes, 32) << endl;
+            }
+        }
+        else
+        {
+            metaOk = 0;
+            if (!silent)
+                cout << "Fail to decode mining params data:" << metaNew << endl;
+        }
+    }
+}
+
 void metaLoop()
 {
     while (true)
     {
-        getNodeMeta();
+        if (pool)
+        {
+            getMiningParams();
+        }
+        else
+        {
+            getNodeMeta();
+        }
         waitMs(update_interval);
     }
 }
@@ -1413,6 +1492,22 @@ void sendGpuSolution(unsigned char *hash, int iterIndex, RockObjParams param, un
     }
 }
 
+void pushToPool(unsigned char hash[32], string rpl)
+{
+    string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"push_to_pool\",\"params\":[\"0x" + toHex(hash, 32) + "\",\"" + rpl + "\"]}";
+    HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
+    string res = header.data();
+    miner_log("POOL", "Pool response to submit: " + res, "yellow");
+}
+
+void pushToNode(unsigned char hash[32], string rpl)
+{
+    string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"push_to_node\",\"params\":[\"0x" + toHex(hash, 32) + "\",\"" + rpl + "\"]}";
+    HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
+    string res = header.data();
+    miner_log("SOLO", "Node response to submit: " + res, "yellow");
+}
+
 std::map<string, int> map_hashes;
 
 void gpuMain(uint64_t threadId)
@@ -1472,11 +1567,11 @@ void gpuMain(uint64_t threadId)
 
     GetNeighbours(sphere.len, sphere.len_indicies, sphere.indices, &adjacentVertices);
 
-
     while (true)
     {
         int run = -1;
-        if(metaOk){
+        if (metaOk)
+        {
             run = 0;
         }
         if (run == -1)
@@ -1510,20 +1605,18 @@ void gpuMain(uint64_t threadId)
             vec = a.export_bits();
         }
 
+        auto sols = doGpuBatch(threadId, gpuInfos[threadId].blocks, gpuInfos[threadId].threads, NULL, NULL,
+                               best_hash, pre_hash, diffBytes, vec.data());
 
+        hashesPerThread[threadId] += gpuInfos[threadId].threads * gpuInfos[threadId].blocks;
 
-                auto sols = doGpuBatch(threadId, gpuInfos[threadId].blocks, gpuInfos[threadId].threads, NULL, NULL,
-                                       best_hash, pre_hash, diffBytes, vec.data());
+        for (int j = 0; j < sols.size() && j < 1; j++)
+        {
+            unsigned char hashObj[32];
+            random_hash(pre_hash, 4, positions, indicies, normals, hashObj, hash_len, pos_len, indicies_len, m_gen, m_distribution, &sols[j].param, NULL, NULL);
+            memcpy(hash, hashObj, 32);
 
-                hashesPerThread[threadId] += gpuInfos[threadId].threads * gpuInfos[threadId].blocks;
-
-                for (int j = 0; j < sols.size() && j < 1; j++)
-                {
-                    unsigned char hashObj[32];
-                    random_hash(pre_hash, 4, positions, indicies, normals, hashObj, hash_len, pos_len, indicies_len, m_gen, m_distribution, &sols[j].param, NULL, NULL);
-                    memcpy(hash, hashObj, 32);
-
-                    /*
+            /*
 68 207 179 82
 correct: 85 82 240 218 150 215 131 23 34 120 200 153 40 166 253 204 209 204 62 38 129 16 177 127 169 53 127 84 246 190 26 78
 gpu: 85 82 240 218 150 215 131 23 34 120 200 153 40 166 253 204 209 204 62 38 129 16 177 127 169 53 127 84 246 190 26 78
@@ -1533,40 +1626,53 @@ best_hash = 44cfb35286e098937d96728812e8c147525e8f2df58e34b4464a195b9510607f
 diff_bytes = 1b01000000000000000000000000000000000000000000000000000000000000
 */
 
-                    miner_log("NICE", "Preparing submit of object to host " + (host), "green");
-                    string objFile = "";
-                    BufferGeometry geo(positions, indicies, normals, pos_len, indicies_len);
-                    geo.ComputeVertexNormals();
-                    objFile = geo.parse();
+            miner_log("NICE", "Preparing submit of object to host " + (host), "green");
+            string objFile = "";
+            BufferGeometry geo(positions, indicies, normals, pos_len, indicies_len);
+            geo.ComputeVertexNormals();
+            objFile = geo.parse();
 
-                    string rpl = "";
-                    for (int i = 0; i < objFile.size(); i++)
-                    {
-                        if (objFile[i] == '\n')
-                        {
-                            rpl += "\\n";
-                        }
-                        else
-                        {
-                            rpl += objFile[i];
-                        }
-                    }
-
-                    cout << "pre_hash = " << toHex(pre_hash, 32) << endl;
-                    cout << "obj_hash = " << toHex(hash, 32) << endl;
-                    cout << "best_hash = " << toHex(best_hash, 32) << endl;
-                    cout << "diff_bytes = " << toHex(diffBytes, 32) << endl;
-                    string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"poscan_pushMiningObject\",\"params\":[\"" + rpl + "\",\"" + toHex(hash, 32) + "\"]}";
-                    HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
-                    string res = header.data();
-                    miner_log("INFO", "Node response to submit: " + res);
+            string rpl = "";
+            for (int i = 0; i < objFile.size(); i++)
+            {
+                if (objFile[i] == '\n')
+                {
+                    rpl += "\\n";
                 }
+                else
+                {
+                    rpl += objFile[i];
+                }
+            }
+            if (pool)
+            {
+                pushToPool(hash, rpl);
+            }
+            else
+            {
+                pushToNode(hash, rpl);
+            }
 
+            // cout << "pre_hash = " << toHex(pre_hash, 32) << endl;
+            // cout << "obj_hash = " << toHex(hash, 32) << endl;
+            // cout << "best_hash = " << toHex(best_hash, 32) << endl;
+            // cout << "diff_bytes = " << toHex(diffBytes, 32) << endl;
+            // string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"poscan_pushMiningObject\",\"params\":[\"" + rpl + "\",\"" + toHex(hash, 32) + "\"]}";
+            // HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
+            // string res = header.data();
+            // miner_log("INFO", "Node response to submit: " + res);
+        }
     }
 }
 
 void cpuMain(uint64_t threadId)
 {
+    // void *rustLib = dlopen("libpass3d.so", RTLD_NOW | RTLD_GLOBAL);
+    // if (!rustLib)
+    // {
+    //     std::cerr << "No se pudo cargar la biblioteca Rust." << std::endl;
+    // }
+
     bool status = setThreadAffinity(cpuInfo.affinity[threadId]);
     if (status == false)
     {
@@ -1624,12 +1730,11 @@ void cpuMain(uint64_t threadId)
 
     GetNeighbours(sphere.len, sphere.len_indicies, sphere.indices, &adjacentVertices);
 
-
-
     while (true)
     {
         int run = -1;
-        if(metaOk){
+        if (metaOk)
+        {
             run = 0;
         }
         if (run == -1)
@@ -1690,76 +1795,84 @@ void cpuMain(uint64_t threadId)
             vec = a.export_bits();
         }
 
+        hashesPerThread[threadId]++;
+        if (hash_len <= 0)
+        {
+            nullsPerThread[threadId]++;
+            continue;
+        }
+        memcpy(sealPre, pre_hash, 32);
+        memcpy(sealPre + 32, hash, 32);
 
-                hashesPerThread[threadId]++;
-                if (hash_len <= 0)
+        sha3_1(sealPre, 64, seal);
+
+        memcpy(hh, diffBytes, 32);
+        memcpy(hh + 32, pre_hash, 32);
+        memcpy(hh + 64, seal, 32);
+
+        sha3_1(hh, 96, hash_final);
+
+        int cmp = 1;
+
+        for (int ii = 0; ii < vec.size(); ii++)
+        {
+            if (vec[ii] > hash_final[ii])
+            {
+                cmp = 1;
+                break;
+            }
+            else if (vec[ii] < hash_final[ii])
+            {
+                cmp = -1;
+                break;
+            }
+        }
+        bool valid = (cmp > 0);
+        if (valid)
+        {
+            miner_log("NICE", "Preparing submit of object to host " + (host), "green");
+            string objFile = "";
+            BufferGeometry geo(positions, indicies, normals, pos_len, indicies_len);
+            geo.ComputeVertexNormals();
+            objFile = geo.parse();
+            string rpl = "";
+            for (int i = 0; i < objFile.size(); i++)
+            {
+                if (objFile[i] == '\n')
                 {
-                    nullsPerThread[threadId]++;
-                    continue;
+                    rpl += "\\n";
                 }
-                memcpy(sealPre, pre_hash, 32);
-                memcpy(sealPre + 32, hash, 32);
-               
-                    sha3_1(sealPre, 64, seal);
-
-
-                memcpy(hh, diffBytes, 32);
-                memcpy(hh + 32, pre_hash, 32);
-                memcpy(hh + 64, seal, 32);
-
-
-                    sha3_1(hh, 96, hash_final);
-  
-                int cmp = 1;
-
-                for (int ii = 0; ii < vec.size(); ii++)
+                else
                 {
-                    if (vec[ii] > hash_final[ii])
-                    {
-                        cmp = 1;
-                        break;
-                    }
-                    else if (vec[ii] < hash_final[ii])
-                    {
-                        cmp = -1;
-                        break;
-                    }
+                    rpl += objFile[i];
                 }
-                bool valid = (cmp > 0);
-                if (valid)
-                {
-                    miner_log("NICE", "Preparing submit of object to host " + (host), "green");
-                    string objFile = "";
-                    BufferGeometry geo(positions, indicies, normals, pos_len, indicies_len);
-                    geo.ComputeVertexNormals();
-                    objFile = geo.parse();
-                    string rpl = "";
-                    for (int i = 0; i < objFile.size(); i++)
-                    {
-                        if (objFile[i] == '\n')
-                        {
-                            rpl += "\\n";
-                        }
-                        else
-                        {
-                            rpl += objFile[i];
-                        }
-                    }
-                    cout << "pre_hash = " << toHex(pre_hash, 32) << endl;
-                    cout << "obj_hash = " << toHex(hash, 32) << endl;
-                    cout << "best_hash = " << toHex(best_hash, 32) << endl;
-                    cout << "diff_bytes = " << toHex(diffBytes, 32) << endl;
-                    string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"poscan_pushMiningObject\",\"params\":[\"" + rpl + "\",\"" + toHex(hash, 32) + "\",\"" + toHex(pre_hash, 32) + "\"]}";
-
-                    HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
-                    string res = header.data();
-                    miner_log("INFO", "Node response to submit: " + res);
-
-                }
-
+            }
+            if (pool)
+            {
+                pushToPool(hash, rpl);
+            }
+            else
+            {
+                pushToNode(hash, rpl);
+            }
+        }
     }
+
+    // dlclose(rustLib);
 }
 
+void pushToStats(
+    std::string device_name,
+    std::string device_cores,
+    std::string tag_hashrate,
+    std::string total_hashrate,
+    std::string good_hashrate)
+{
+    string submit_data = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"push_stats\",\"params\":[\"" + device_name + "\", \"" + device_cores + "\",\"" + tag_hashrate + "\",\"" + total_hashrate + "\",\"" + good_hashrate + "\"]}";
+    HttpHeader header = HttpRequest(host, "POST", "/", submit_data, "", "", "");
+    string res = header.data();
+    miner_log("STATS", "Stats submitted: " + res, "yellow");
+}
 
 void hashrate()
 {
@@ -1777,9 +1890,23 @@ void hashrate()
         int d = delay;
         delay = getMs(t1, t2);
         string text = "";
+        std::vector<string> textGpu = {};
         unsigned long long h_total = 0;
         unsigned long long h_total_bad = 0;
 
+        if (use_gpu)
+        {
+            for (int i = 0; i < gpusCount; i++)
+            {
+                textGpu.push_back("Hashes per thread: " + to_string(hashesPerThread[i] / (delay / 1000)) + " h/s");
+                h_total += hashesPerThread[i];
+                hashesPerThread[i] = 0;
+                h_total_bad += nullsPerThread[i];
+                nullsPerThread[i] = 0;
+            }
+        }
+        else
+        {
             for (int i = 0; i < cpuInfo.cores; i++)
             {
                 text += "core #" + to_string(i) + " (affinity " + to_string(cpuInfo.affinity[i]) + "): " + to_string(hashesPerThread[i] / (delay / 1000)) + " h/s\n";
@@ -1788,7 +1915,7 @@ void hashrate()
                 h_total_bad += nullsPerThread[i];
                 nullsPerThread[i] = 0;
             }
-
+        }
 
         double good = (h_total - h_total_bad - dups) / (delay / 1000.0);
         if (count_dup)
@@ -1828,8 +1955,32 @@ void hashrate()
                 hashesPerThreadBase[i] = 0;
             }
 
-            miner_log("INFO", "Hashrate total: " + hs + " " + ht + "   GOOD: " + to_string(good) + " H/s   Diff: " + to_string(diff));
+            // std::string cpuName = cpuInfo.cpuName;
+            // int cores = cpuInfo.cores;
+            if (use_gpu)
+            {
+                for (int i = 0; i < gpusCount; i++)
+                {
+                    log("GPU #" + to_string(i), textGpu[i], "green");
+                    // pushToStats(
+                    //     gpuNames[i],
+                    //     to_string(gpu_threads),
+                    //     ht,
+                    //     hs,
+                    //     to_string(good));
+                }
+            }
+            // else
+            // {
+            //     pushToStats(
+            //         cpuInfo.cpuName,
+            //         to_string(cpuInfo.cores),
+            //         ht,
+            //         hs,
+            //         to_string(good));
+            // }
 
+            miner_log("INFO", "Hashrate total: " + hs + " " + ht + "   GOOD: " + to_string(good) + " H/s   Diff: " + to_string(diff));
         }
         else
         {
@@ -1842,7 +1993,6 @@ void hashrate()
             hh = h_total / (delay / 1000.0);
             miner_log("INFO", "Hashrate total: " + hs + " " + ht + "   CPU_BASE: " + to_string((int)hh) + " H/s   Diff: " + to_string(diff));
         }
-
     }
 }
 
@@ -1864,11 +2014,11 @@ void initGpu()
         cudaDeviceProp pr;
         cudaGetDeviceProperties(&pr, i);
         log("GPU #" + to_string(i), std::string(pr.name), "green");
+        gpuNames.push_back(std::string(pr.name));
         gpuInfos[i].blocks = pr.multiProcessorCount;
         gpuInfos[i].threads = 256;
     }
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -1916,14 +2066,11 @@ int main(int argc, char *argv[])
 
     // cudaGetDeviceCount(&gpus);
 
-
     if (args.m_args.size() == 0)
     {
         help();
         return 0;
     }
-
-
 
     if (args.get("sp-stacks") != "NULL_ARG")
     {
@@ -1942,7 +2089,6 @@ int main(int argc, char *argv[])
     {
         sphere_radius = tryParseFloat(args.get("sp-radius"));
     }
-
 
     if (args.get("sp-slices") != "NULL_ARG")
     {
@@ -1991,7 +2137,6 @@ int main(int argc, char *argv[])
         tests = s;
     }
 
-
     log("INFO", "Sphere stacks: " + to_string(sphere_stacks));
     log("INFO", "Sphere slices: " + to_string(sphere_slices));
     log("INFO", "Sphere radius: " + to_string(sphere_radius));
@@ -2008,7 +2153,6 @@ int main(int argc, char *argv[])
 
     log("INFO", "Using avx2: " + to_string(use_avx2));
 
-
     if (args.get("gpu") != "NULL_ARG")
     {
         use_gpu = true;
@@ -2016,14 +2160,12 @@ int main(int argc, char *argv[])
         initGpu();
     }
 
-
     if (args.get("benchmark") != "NULL_ARG" || args.get("bench") != "NULL_ARG")
     {
 
         benchmark();
         return 0;
     }
-
 
     if (args.get("count-dup") != "NULL_ARG")
     {
@@ -2036,7 +2178,6 @@ int main(int argc, char *argv[])
         repeats = 0;
         TEST_RUN = 1;
         totalRocks = 0;
-
 
         Vec3Float64 positions[SPHERE_MAX_SIZE];
         Vec3Float64 normals[SPHERE_MAX_SIZE];
@@ -2130,12 +2271,15 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-
     if (args.get("host") != "NULL_ARG")
     {
         host = args.get("host");
     }
 
+    if (args.get("pool") != "NULL_ARG")
+    {
+        pool = true;
+    }
 
     if (host.size() == 0)
     {
@@ -2145,7 +2289,6 @@ int main(int argc, char *argv[])
     }
 
     initTcp();
-
 
     if (use_gpu == false)
     {
@@ -2187,7 +2330,6 @@ int main(int argc, char *argv[])
     threads.push_back(thread(metaLoop));
 
     threads.push_back(thread(hashrate));
-
 
     logInit = true;
     while (true)
