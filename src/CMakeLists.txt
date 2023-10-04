@@ -1,13 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
-if (UNIX)
+if(UNIX)
     set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
-endif()
-
-if(WIN32)
-    message(STATUS "Project is building for Windows")
-    set(CUDA_TOOLKIT_ROOT_DIR "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8")
-    set(CMAKE_CUDA_COMPILER "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/bin/nvcc.exe")
 endif()
 
 project("3dp-miner" LANGUAGES C CXX CUDA)
@@ -25,20 +19,20 @@ set(CUDA_FILES "")
 set(STATIC_FLAGS "")
 
 if(USE_STATIC)
-set(STATIC_FLAGS "-static")
+    set(STATIC_FLAGS "-static")
 endif()
 
 if(USE_CLANG)
-set(CMAKE_C_COMPILER /usr/bin/clang)
-set(CMAKE_CXX_COMPILER /usr/bin/clang++)
-set(CLANG_FLAGS "-Ofast")
+    set(CMAKE_C_COMPILER /usr/bin/clang)
+    set(CMAKE_CXX_COMPILER /usr/bin/clang++)
+    set(CLANG_FLAGS "-Ofast")
 else()
-set(CLANG_FLAGS "-O3")
-set(CMAKE_C_COMPILER /usr/bin/gcc)
-set(CMAKE_CXX_COMPILER /usr/bin/g++)
+    set(CLANG_FLAGS "-O3")
+    set(CMAKE_C_COMPILER /usr/bin/gcc)
+    set(CMAKE_CXX_COMPILER /usr/bin/g++)
 endif()
 
-find_package(CUDA  REQUIRED)
+find_package(CUDA REQUIRED)
 include_directories("${CUDA_INCLUDE_DIRS}")
 
 set(CMAKE_CXX_FLAGS "${CLANG_FLAGS} ${STATIC_FLAGS} -m64 -s -std=c++11 -fPIC -funroll-all-loops")
@@ -47,9 +41,9 @@ set(CMAKE_C_FLAGS "${CLANG_FLAGS} ${STATIC_FLAGS} -m64 -s -funroll-all-loops -fP
 set(CUDA_NVCC_FLAGS "${CLANG_FLAGS} -std=c++11 --use_fast_math --relocatable-device-code=true -v -Xptxas -O3 ")
 
 if(USE_CUDA)
-list(APPEND CUDA_FILES kernel.cu)
-list(APPEND CUDA_FILES grid_cuda.cu)
-list(APPEND CUDA_FILES sha3_gpu.cu)
+    list(APPEND CUDA_FILES kernel.cu)
+    list(APPEND CUDA_FILES grid_cuda.cu)
+    list(APPEND CUDA_FILES sha3_gpu.cu)
 endif()
 
 set_source_files_properties(sha256_simd.cpp PROPERTIES COMPILE_FLAGS "-msse4 -msha -s -O3")
@@ -57,11 +51,11 @@ set_source_files_properties(sha256_simd.cpp PROPERTIES COMPILE_FLAGS "-msse4 -ms
 add_executable(3dp-miner ${CUDA_FILES} sha256_simd.cpp main.cpp sphere.cu math_utils.cu buffer_geometry.cu scrape.cu simple_deque.cu grid.cpp sha256.cu perlin.cu Http.cpp json.cpp utils.cpp sha3.cpp int128.cpp int128.h uint128_t.cpp uint128_t.h uint256_t.cpp uint256_t.h uint256_t_include.h uint256_t_build.h uint128_t_include.h uint256_t_build.h uint256_t_config_include.h uint128_t_config_include.h)
 
 target_compile_options(3dp-miner PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
-                       -O3
-                       --use_fast_math
-                       --relocatable-device-code=true
-                       "-Xptxas=-O3 -v"
-                       >)
+    -O3
+    --use_fast_math
+    --relocatable-device-code=true
+    "-Xptxas=-O3 -v"
+    >)
 
 set_target_properties("3dp-miner"
     PROPERTIES
